@@ -1,6 +1,7 @@
 from rest_framework import serializers
 from django.contrib.auth.models import User
-from .models import Tarea
+from .models import Tarea, Amistad, Grupo, CodigoInvitacion
+
 
 class UserSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True)
@@ -16,7 +17,16 @@ class UserSerializer(serializers.ModelSerializer):
             password=validated_data['password'],
             first_name=validated_data.get('first_name', ''),
         )
+        # Crear código de invitación automáticamente
+        CodigoInvitacion.objects.create(user=user)
         return user
+
+
+class UserPublicoSerializer(serializers.ModelSerializer):
+    """Serializer público — no expone datos sensibles"""
+    class Meta:
+        model = User
+        fields = ['id', 'username', 'first_name', 'email']
 
 
 class TareaSerializer(serializers.ModelSerializer):
@@ -29,3 +39,35 @@ class TareaSerializer(serializers.ModelSerializer):
 
     def get_tiempo_total_actual(self, obj):
         return obj.tiempo_total_actual()
+
+
+class AmistadSerializer(serializers.ModelSerializer):
+    solicitante = UserPublicoSerializer(read_only=True)
+    receptor = UserPublicoSerializer(read_only=True)
+
+    class Meta:
+        model = Amistad
+        fields = ['id', 'solicitante', 'receptor', 'estado', 'created_at']
+
+
+class GrupoSerializer(serializers.ModelSerializer):
+    creador = UserPublicoSerializer(read_only=True)
+    miembros = UserPublicoSerializer(many=True, read_only=True)
+    total_miembros = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Grupo
+        fields = ['id', 'nombre', 'descripcion', 'creador', 'miembros',
+                  'codigo_acceso', 'total_miembros', 'created_at']
+        read_only_fields = ['creador', 'codigo_acceso', 'created_at']
+
+    def get_total_miembros(self, obj):
+        return obj.miembros.count()
+
+
+class EstadisticasMiembroSerializer(serializers.Serializer):
+    usuario = UserPublicoSerializer()
+    total_tareas = serializers.IntegerField()
+    tareas_completadas = serializers.IntegerField()
+    tiempo_trabajado = serializers.IntegerField()
+    progreso = serializers.FloatField()
