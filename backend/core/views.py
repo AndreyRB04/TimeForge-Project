@@ -384,14 +384,42 @@ def pausar_tarea(request, pk):
 def terminar_tarea(request, pk):
     try:
         tarea = Tarea.objects.get(pk=pk)
+        
+        # 1. Lógica de tiempo
         if tarea.last_start_time and tarea.estado == 'en_progreso':
             transcurrido = int((timezone.now() - tarea.last_start_time).total_seconds()) // 60
             tarea.actual_time = (tarea.actual_time or 0) + transcurrido
+        
+        # 2. Actualización de estado
         tarea.estado = 'terminada'
         tarea.is_completed = True
         tarea.last_start_time = None
         tarea.save()
-        return Response(TareaSerializer(tarea).data)
+        
+        # 3. Lógica de recompensas
+        perfil = get_or_create_perfil(tarea.user)
+        perfil.actualizar_racha()
+        
+        puntos = 10
+        # Bonus por tiempo
+        if tarea.estimated_time and tarea.actual_time:
+            if tarea.actual_time <= tarea.estimated_time:
+                puntos += 5
+        
+        nuevas_medallas = perfil.agregar_puntos(puntos, 'tarea_completada')
+        
+        # 4. Construcción de respuesta con recompensas
+        response_data = TareaSerializer(tarea).data
+        response_data['recompensa'] = {
+            'puntos_ganados': puntos,
+            'puntos_totales': perfil.puntos,
+            'nivel': perfil.nivel,
+            'nivel_nombre': perfil.nombre_nivel(),
+            'nuevas_medallas': [{'nombre': m.nombre, 'emoji': m.emoji} for m in nuevas_medallas],
+        }
+        
+        return Response(response_data)
+        
     except Tarea.DoesNotExist:
         return Response({'error': 'Tarea no encontrada'}, status=404)
 
@@ -539,33 +567,3 @@ def ranking_global(request):
             'medallas': MedallaUsuario.objects.filter(user=p.user).count(),
         })
     return Response(resultado)
-
-
-# ── FUNCIÓN PARA LLAMAR CUANDO SE COMPLETA UNA TAREA ─────────────────────────
-# Agrega esto dentro de terminar_tarea():
-"""
-# Al terminar tarea, otorgar puntos
-perfil = get_or_create_perfil(tarea.user)
-perfil.actualizar_racha()
-
-# Puntos por completar tarea
-puntos = 10
-# Bonus por tiempo (si completó antes del estimado)
-if tarea.estimated_time and tarea.actual_time:
-    if tarea.actual_time <= tarea.estimated_time:
-        puntos += 5  # bonus eficiencia
-
-nuevas_medallas = perfil.agregar_puntos(puntos, 'tarea_completada')
-
-# Retornar con info de recompensas
-response_data = TareaSerializer(tarea).data
-response_data['recompensa'] = {
-    'puntos_ganados': puntos,
-    'puntos_totales': perfil.puntos,
-    'nivel': perfil.nivel,
-    'nivel_nombre': perfil.nombre_nivel(),
-    'nuevas_medallas': [{'nombre': m.nombre, 'emoji': m.emoji} for m in nuevas_medallas],
-}
-return Response(response_data)
-"""
-
