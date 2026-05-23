@@ -420,3 +420,152 @@ class TareaViewSet(viewsets.ModelViewSet):
             serializer.save(user=user)
         else:
             serializer.save()
+# ── RECOMPENSAS ───────────────────────────────────────────────────────────────
+
+def get_or_create_perfil(user):
+    perfil, _ = PerfilRecompensas.objects.get_or_create(user=user)
+    return perfil
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def mi_perfil_recompensas(request):
+    user = get_user_from_request(request)
+    if not user:
+        return Response({'error': 'No autorizado'}, status=401)
+
+    perfil = get_or_create_perfil(user)
+    medallas = MedallaUsuario.objects.filter(user=user).order_by('-obtenida_en')
+    titulos = TituloUsuario.objects.filter(user=user)
+
+    # Info del nivel actual
+    nivel_info = {}
+    for nivel_num, puntos_min, nombre, emoji, descripcion in NIVELES:
+        if nivel_num == perfil.nivel:
+            nivel_info = {
+                'numero': nivel_num,
+                'nombre': nombre,
+                'emoji': emoji,
+                'descripcion': descripcion,
+                'puntos_minimos': puntos_min,
+            }
+
+    return Response({
+        'puntos': perfil.puntos,
+        'nivel': perfil.nivel,
+        'nivel_nombre': perfil.nombre_nivel(),
+        'nivel_info': nivel_info,
+        'progreso_nivel': perfil.progreso_nivel(),
+        'puntos_siguiente_nivel': perfil.puntos_siguiente_nivel(),
+        'racha_actual': perfil.racha_actual,
+        'racha_maxima': perfil.racha_maxima,
+        'titulo_seleccionado': perfil.titulo_seleccionado,
+        'medallas': [
+            {
+                'codigo': m.codigo,
+                'nombre': m.nombre,
+                'emoji': m.emoji,
+                'descripcion': m.descripcion,
+                'obtenida_en': m.obtenida_en,
+            } for m in medallas
+        ],
+        'titulos': [
+            {
+                'codigo': t.codigo,
+                'nombre': t.nombre,
+                'descripcion': t.descripcion,
+            } for t in titulos
+        ],
+        'total_medallas': medallas.count(),
+    })
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def todos_los_niveles(request):
+    """Muestra el mapa de niveles completo"""
+    user = get_user_from_request(request)
+    perfil = get_or_create_perfil(user) if user else None
+
+    niveles = []
+    for nivel_num, puntos_min, nombre, emoji, descripcion in NIVELES:
+        niveles.append({
+            'numero': nivel_num,
+            'nombre': f'{emoji} {nombre} Nivel {nivel_num}',
+            'emoji': emoji,
+            'descripcion': descripcion,
+            'puntos_requeridos': puntos_min,
+            'desbloqueado': perfil and perfil.nivel >= nivel_num,
+        })
+    return Response(niveles)
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def seleccionar_titulo(request):
+    user = get_user_from_request(request)
+    if not user:
+        return Response({'error': 'No autorizado'}, status=401)
+
+    codigo = request.data.get('codigo', '')
+    if not TituloUsuario.objects.filter(user=user, codigo=codigo).exists():
+        return Response({'error': 'No tienes ese título'}, status=400)
+
+    titulo = TituloUsuario.objects.get(user=user, codigo=codigo)
+    perfil = get_or_create_perfil(user)
+    perfil.titulo_seleccionado = titulo.nombre
+    perfil.save()
+    return Response({'titulo': titulo.nombre})
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def ranking_global(request):
+    """Ranking global de todos los usuarios por puntos"""
+    perfiles = PerfilRecompensas.objects.select_related('user').order_by('-puntos')[:20]
+    resultado = []
+    for i, p in enumerate(perfiles):
+        resultado.append({
+            'posicion': i + 1,
+            'usuario': {
+                'id': p.user.id,
+                'nombre': p.user.first_name or p.user.username,
+                'username': p.user.username,
+            },
+            'puntos': p.puntos,
+            'nivel': p.nivel,
+            'nivel_nombre': p.nombre_nivel(),
+            'racha': p.racha_actual,
+            'medallas': MedallaUsuario.objects.filter(user=p.user).count(),
+        })
+    return Response(resultado)
+
+
+# ── FUNCIÓN PARA LLAMAR CUANDO SE COMPLETA UNA TAREA ─────────────────────────
+# Agrega esto dentro de terminar_tarea():
+"""
+# Al terminar tarea, otorgar puntos
+perfil = get_or_create_perfil(tarea.user)
+perfil.actualizar_racha()
+
+# Puntos por completar tarea
+puntos = 10
+# Bonus por tiempo (si completó antes del estimado)
+if tarea.estimated_time and tarea.actual_time:
+    if tarea.actual_time <= tarea.estimated_time:
+        puntos += 5  # bonus eficiencia
+
+nuevas_medallas = perfil.agregar_puntos(puntos, 'tarea_completada')
+
+# Retornar con info de recompensas
+response_data = TareaSerializer(tarea).data
+response_data['recompensa'] = {
+    'puntos_ganados': puntos,
+    'puntos_totales': perfil.puntos,
+    'nivel': perfil.nivel,
+    'nivel_nombre': perfil.nombre_nivel(),
+    'nuevas_medallas': [{'nombre': m.nombre, 'emoji': m.emoji} for m in nuevas_medallas],
+}
+return Response(response_data)
+"""
+
