@@ -32,4 +32,11 @@ urlpatterns = [
     path('tareas/<int:pk>/iniciar/', views.iniciar_tarea),
     path('tareas/<int:pk>/pausar/', views.pausar_tarea),
     path('tareas/<int:pk>/terminar/', views.terminar_tarea),
+
+    # Recompensas
+    path('recompensas/', views.mi_perfil_recompensas),
+    path('recompensas/niveles/', views.todos_los_niveles),
+    path('recompensas/titulo/', views.seleccionar_titulo),
+    path('recompensas/ranking/', views.ranking_global),
+
 ]
