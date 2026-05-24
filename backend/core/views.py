@@ -1,4 +1,6 @@
 from django.db.models import Count, Sum, Avg
+from .models import Competencia, ParticipanteCompetencia, RetoCompetencia
+from datetime import timedelta
 from .firebase_service import enviar_notificacion
 from datetime import datetime, timedelta
 from .models import PerfilRecompensas, MedallaUsuario, TituloUsuario, NIVELES
@@ -753,3 +755,177 @@ class TareaViewSet(viewsets.ModelViewSet):
             serializer.save(user=user)
         else:
             serializer.save()
+@api_view(['GET', 'POST'])
+@permission_classes([AllowAny])
+def competencias_grupo(request, grupo_id):
+    user = get_user_from_request(request)
+    if not user:
+        return Response({'error': 'No autorizado'}, status=401)
+
+    try:
+        grupo = Grupo.objects.get(id=grupo_id, miembros=user)
+    except Grupo.DoesNotExist:
+        return Response({'error': 'Grupo no encontrado'}, status=404)
+
+    if request.method == 'GET':
+        competencias = Competencia.objects.filter(grupo=grupo).order_by('-created_at')
+        resultado = []
+        for c in competencias:
+            participando = ParticipanteCompetencia.objects.filter(
+                competencia=c, user=user
+            ).exists()
+            resultado.append({
+                'id': c.id,
+                'nombre': c.nombre,
+                'descripcion': c.descripcion,
+                'fecha_inicio': c.fecha_inicio,
+                'fecha_fin': c.fecha_fin,
+                'estado': c.estado,
+                'dias_restantes': c.dias_restantes(),
+                'esta_activa': c.esta_activa(),
+                'total_participantes': c.participantes.count(),
+                'participando': participando,
+                'creador': c.creador.first_name or c.creador.username,
+            })
+        return Response(resultado)
+
+    # POST — crear competencia mensual
+    nombre = request.data.get('nombre', f'Competencia de {timezone.now().strftime("%B %Y")}')
+    descripcion = request.data.get('descripcion', '')
+
+    ahora = timezone.now()
+    # Inicio: primer día del mes actual
+    inicio = ahora.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    # Fin: último día del mes
+    if ahora.month == 12:
+        fin = ahora.replace(year=ahora.year + 1, month=1, day=1) - timedelta(seconds=1)
+    else:
+        fin = ahora.replace(month=ahora.month + 1, day=1) - timedelta(seconds=1)
+
+    competencia = Competencia.objects.create(
+        grupo=grupo,
+        nombre=nombre,
+        descripcion=descripcion,
+        fecha_inicio=inicio,
+        fecha_fin=fin,
+        creador=user,
+    )
+
+    # Agregar al creador como participante
+    ParticipanteCompetencia.objects.create(competencia=competencia, user=user)
+
+    # Crear retos automáticos
+    retos_default = [
+        {'titulo': 'Primer paso', 'descripcion': 'Completa 5 tareas este mes', 'tipo': 'tareas', 'meta': 5, 'emoji': '🎯', 'puntos_bonus': 30},
+        {'titulo': 'Dedicado', 'descripcion': 'Trabaja 10 horas este mes', 'tipo': 'tiempo', 'meta': 10, 'emoji': '⏱️', 'puntos_bonus': 50},
+        {'titulo': 'Constante', 'descripcion': 'Mantén una racha de 7 días', 'tipo': 'racha', 'meta': 7, 'emoji': '🔥', 'puntos_bonus': 70},
+        {'titulo': 'Productivo', 'descripcion': 'Acumula 500 puntos', 'tipo': 'puntos', 'meta': 500, 'emoji': '⭐', 'puntos_bonus': 100},
+        {'titulo': 'Campeón', 'descripcion': 'Completa 20 tareas este mes', 'tipo': 'tareas', 'meta': 20, 'emoji': '🏆', 'puntos_bonus': 150},
+    ]
+
+    for r in retos_default:
+        RetoCompetencia.objects.create(competencia=competencia, **r)
+
+    return Response({
+        'id': competencia.id,
+        'nombre': competencia.nombre,
+        'fecha_inicio': competencia.fecha_inicio,
+        'fecha_fin': competencia.fecha_fin,
+        'dias_restantes': competencia.dias_restantes(),
+    }, status=201)
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def unirse_competencia(request, competencia_id):
+    user = get_user_from_request(request)
+    if not user:
+        return Response({'error': 'No autorizado'}, status=401)
+
+    try:
+        competencia = Competencia.objects.get(id=competencia_id)
+        # Verificar que el user es miembro del grupo
+        if not competencia.grupo.miembros.filter(id=user.id).exists():
+            return Response({'error': 'No eres miembro de este grupo'}, status=403)
+    except Competencia.DoesNotExist:
+        return Response({'error': 'Competencia no encontrada'}, status=404)
+
+    ParticipanteCompetencia.objects.get_or_create(competencia=competencia, user=user)
+    return Response({'ok': True, 'mensaje': '¡Te uniste a la competencia!'})
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def ranking_competencia(request, competencia_id):
+    user = get_user_from_request(request)
+    if not user:
+        return Response({'error': 'No autorizado'}, status=401)
+
+    try:
+        competencia = Competencia.objects.get(id=competencia_id)
+    except Competencia.DoesNotExist:
+        return Response({'error': 'Competencia no encontrada'}, status=404)
+
+    ranking_data = competencia.get_ranking()
+    resultado = []
+    for i, r in enumerate(ranking_data):
+        u = r['usuario']
+        resultado.append({
+            'posicion': i + 1,
+            'usuario': {
+                'id': u.id,
+                'nombre': u.first_name or u.username,
+                'username': u.username,
+            },
+            'tareas_completadas': r['tareas_completadas'],
+            'tiempo_trabajado': r['tiempo_trabajado'],
+            'puntos_recompensas': r['puntos_recompensas'],
+            'racha': r['racha'],
+            'score_total': r['score_total'],
+            'es_yo': u.id == user.id,
+        })
+
+    return Response({
+        'competencia': {
+            'id': competencia.id,
+            'nombre': competencia.nombre,
+            'dias_restantes': competencia.dias_restantes(),
+            'esta_activa': competencia.esta_activa(),
+            'fecha_fin': competencia.fecha_fin,
+        },
+        'ranking': resultado,
+    })
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def retos_competencia(request, competencia_id):
+    user = get_user_from_request(request)
+    if not user:
+        return Response({'error': 'No autorizado'}, status=401)
+
+    try:
+        competencia = Competencia.objects.get(id=competencia_id)
+    except Competencia.DoesNotExist:
+        return Response({'error': 'Competencia no encontrada'}, status=404)
+
+    retos = RetoCompetencia.objects.filter(competencia=competencia)
+    resultado = []
+    for r in retos:
+        progreso = r.progreso_usuario(user, competencia)
+        completado = progreso >= r.meta
+        pct = min(round((progreso / r.meta) * 100), 100) if r.meta > 0 else 0
+        resultado.append({
+            'id': r.id,
+            'titulo': r.titulo,
+            'descripcion': r.descripcion,
+            'tipo': r.tipo,
+            'meta': r.meta,
+            'progreso': progreso,
+            'porcentaje': pct,
+            'completado': completado,
+            'emoji': r.emoji,
+            'puntos_bonus': r.puntos_bonus,
+        })
+
+    return Response(resultado)
