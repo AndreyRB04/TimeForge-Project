@@ -42,4 +42,10 @@ urlpatterns = [
     path('estadisticas/avanzadas/', views.estadisticas_avanzadas),
     path('notificaciones/token/', views.guardar_fcm_token),
 
+    # competencia
+    path('grupos/<int:grupo_id>/competencias/', views.competencias_grupo),
+    path('competencias/<int:competencia_id>/unirse/', views.unirse_competencia),
+    path('competencias/<int:competencia_id>/ranking/', views.ranking_competencia),
+    path('competencias/<int:competencia_id>/retos/', views.retos_competencia),
+
 ]
