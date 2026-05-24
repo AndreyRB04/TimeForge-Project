@@ -40,5 +40,6 @@ urlpatterns = [
     path('recompensas/ranking/', views.ranking_global),
 
     path('estadisticas/avanzadas/', views.estadisticas_avanzadas),
+    path('notificaciones/token/', views.guardar_fcm_token),
 
 ]
