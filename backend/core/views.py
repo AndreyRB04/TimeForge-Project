@@ -1,3 +1,5 @@
+from django.db.models import Count, Sum, Avg
+from datetime import datetime, timedelta
 from .models import PerfilRecompensas, MedallaUsuario, TituloUsuario, NIVELES
 from rest_framework import viewsets, status
 from rest_framework.decorators import api_view, permission_classes
@@ -567,3 +569,133 @@ def ranking_global(request):
             'medallas': MedallaUsuario.objects.filter(user=p.user).count(),
         })
     return Response(resultado)
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def estadisticas_avanzadas(request):
+    from django.utils import timezone
+    from datetime import timedelta
+    
+    user = get_user_from_request(request)
+    if not user:
+        return Response({'error': 'No autorizado'}, status=401)
+
+    periodo = request.query_params.get('periodo', 'semana')
+    ahora = timezone.now()
+
+    if periodo == 'semana':
+        desde = ahora - timedelta(days=7)
+    elif periodo == 'mes':
+        desde = ahora - timedelta(days=30)
+    elif periodo == 'trimestre':
+        desde = ahora - timedelta(days=90)
+    else:
+        desde = ahora - timedelta(days=7)
+
+    tareas = Tarea.objects.filter(user=user, created_at__gte=desde)
+    tareas_completadas = tareas.filter(is_completed=True)
+
+    # ── 1. Tiempo trabajado por día ──────────────────────────────────────────
+    tiempo_por_dia = {}
+    for i in range(7):
+        dia = (ahora - timedelta(days=i)).strftime('%a')
+        tiempo_por_dia[dia] = 0
+
+    for tarea in tareas_completadas:
+        dia = tarea.updated_at.strftime('%a')
+        if dia in tiempo_por_dia:
+            tiempo_por_dia[dia] += tarea.actual_time or 0
+
+    dias_orden = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+    dias_es = {'Mon': 'Lun', 'Tue': 'Mar', 'Wed': 'Mié', 'Thu': 'Jue', 'Fri': 'Vie', 'Sat': 'Sáb', 'Sun': 'Dom'}
+    tiempo_por_dia_lista = [
+        {'dia': dias_es.get(d, d), 'minutos': tiempo_por_dia.get(d, 0)}
+        for d in dias_orden
+    ]
+
+    # ── 2. Tareas completadas por día (esta semana) ──────────────────────────
+    tareas_por_dia = {}
+    for i in range(7):
+        dia = (ahora - timedelta(days=i)).strftime('%a')
+        tareas_por_dia[dia] = 0
+
+    for tarea in tareas_completadas:
+        dia = tarea.updated_at.strftime('%a')
+        if dia in tareas_por_dia:
+            tareas_por_dia[dia] += 1
+
+    tareas_por_dia_lista = [
+        {'dia': dias_es.get(d, d), 'cantidad': tareas_por_dia.get(d, 0)}
+        for d in dias_orden
+    ]
+
+    # ── 3. Horas pico (a qué hora trabajas más) ──────────────────────────────
+    horas_pico = {}
+    for h in range(24):
+        horas_pico[h] = 0
+
+    todas_tareas = Tarea.objects.filter(user=user, last_start_time__isnull=False)
+    for tarea in todas_tareas:
+        if tarea.last_start_time:
+            hora = tarea.last_start_time.hour
+            horas_pico[hora] += tarea.actual_time or 0
+
+    horas_pico_lista = [
+        {'hora': f'{h:02d}:00', 'minutos': horas_pico[h]}
+        for h in range(24)
+        if horas_pico[h] > 0
+    ]
+    horas_pico_lista.sort(key=lambda x: x['minutos'], reverse=True)
+    top_horas = horas_pico_lista[:5]
+
+    # Mejor hora
+    mejor_hora = top_horas[0]['hora'] if top_horas else 'Sin datos'
+
+    # ── 4. Distribución por estado ───────────────────────────────────────────
+    todas = Tarea.objects.filter(user=user)
+    distribucion = [
+        {'estado': 'Completadas', 'cantidad': todas.filter(is_completed=True).count(), 'color': '#4CAF50'},
+        {'estado': 'Pendientes', 'cantidad': todas.filter(estado='pendiente').count(), 'color': '#FF9800'},
+        {'estado': 'En progreso', 'cantidad': todas.filter(estado='en_progreso').count(), 'color': '#6C63FF'},
+        {'estado': 'Pausadas', 'cantidad': todas.filter(estado='pausada').count(), 'color': '#F44336'},
+    ]
+    distribucion = [d for d in distribucion if d['cantidad'] > 0]
+
+    # ── 5. Eficiencia ────────────────────────────────────────────────────────
+    con_tiempo = tareas_completadas.filter(
+        actual_time__gt=0,
+        estimated_time__gt=0
+    )
+    total_eficiencia = 0
+    count_eficiencia = 0
+    for t in con_tiempo:
+        if t.estimated_time > 0:
+            ef = min((t.estimated_time / t.actual_time) * 100, 100)
+            total_eficiencia += ef
+            count_eficiencia += 1
+
+    eficiencia_promedio = round(total_eficiencia / count_eficiencia, 1) if count_eficiencia > 0 else 0
+
+    # ── 6. Resumen general ───────────────────────────────────────────────────
+    tiempo_total = sum(t.actual_time or 0 for t in todas)
+    racha = 0
+    try:
+        racha = user.perfil_recompensas.racha_actual
+    except:
+        pass
+
+    return Response({
+        'periodo': periodo,
+        'resumen': {
+            'total_tareas': todas.count(),
+            'completadas': todas.filter(is_completed=True).count(),
+            'tiempo_total_minutos': tiempo_total,
+            'eficiencia_promedio': eficiencia_promedio,
+            'racha_actual': racha,
+            'mejor_hora': mejor_hora,
+        },
+        'tiempo_por_dia': tiempo_por_dia_lista,
+        'tareas_por_dia': tareas_por_dia_lista,
+        'horas_pico': top_horas,
+        'distribucion_estados': distribucion,
+    })
