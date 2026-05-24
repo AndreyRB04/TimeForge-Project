@@ -39,4 +39,6 @@ urlpatterns = [
     path('recompensas/titulo/', views.seleccionar_titulo),
     path('recompensas/ranking/', views.ranking_global),
 
+    path('estadisticas/avanzadas/', views.estadisticas_avanzadas),
+
 ]
