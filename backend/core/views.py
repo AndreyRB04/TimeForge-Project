@@ -493,7 +493,7 @@ def estadisticas_avanzadas(request):
         'distribucion_estados': distribucion,
     })
 
-    @api_view(['POST'])
+@api_view(['POST'])
 @permission_classes([AllowAny])
 def guardar_fcm_token(request):
     user = get_user_from_request(request)
