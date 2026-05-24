@@ -566,6 +566,169 @@ def notif_nueva_medalla(user, nombre_medalla, emoji):
             {'tipo': 'nueva_medalla'}
         )
     except: pass
+# ── AGREGAR ESTAS FUNCIONES AL FINAL DE views.py ─────────────────────────────
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def agregar_por_codigo(request):
+    user = get_user_from_request(request)
+    if not user:
+        return Response({'error': 'No autorizado'}, status=401)
+    codigo = request.data.get('codigo', '')
+    try:
+        inv = CodigoInvitacion.objects.get(codigo=codigo)
+        receptor = inv.user
+    except CodigoInvitacion.DoesNotExist:
+        return Response({'error': 'Código inválido'}, status=404)
+    if receptor == user:
+        return Response({'error': 'No puedes agregarte a ti mismo'}, status=400)
+    existe = Amistad.objects.filter(
+        solicitante=user, receptor=receptor
+    ).exists() or Amistad.objects.filter(
+        solicitante=receptor, receptor=user
+    ).exists()
+    if existe:
+        return Response({'error': 'Ya existe una amistad con este usuario'}, status=400)
+    amistad = Amistad.objects.create(solicitante=user, receptor=receptor, estado='aceptada')
+    return Response(AmistadSerializer(amistad).data, status=201)
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def mis_amigos(request):
+    user = get_user_from_request(request)
+    if not user:
+        return Response({'error': 'No autorizado'}, status=401)
+    amistades = Amistad.objects.filter(
+        estado='aceptada'
+    ).filter(solicitante=user) | Amistad.objects.filter(
+        estado='aceptada'
+    ).filter(receptor=user)
+    amigos = []
+    for a in amistades:
+        amigo = a.receptor if a.solicitante == user else a.solicitante
+        amigos.append(UserPublicoSerializer(amigo).data)
+    return Response(amigos)
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def solicitudes_recibidas(request):
+    user = get_user_from_request(request)
+    if not user:
+        return Response({'error': 'No autorizado'}, status=401)
+    solicitudes = Amistad.objects.filter(receptor=user, estado='pendiente')
+    return Response(AmistadSerializer(solicitudes, many=True).data)
+
+
+@api_view(['GET', 'POST'])
+@permission_classes([AllowAny])
+def grupos(request):
+    user = get_user_from_request(request)
+    if not user:
+        return Response({'error': 'No autorizado'}, status=401)
+    if request.method == 'GET':
+        mis_grupos = Grupo.objects.filter(miembros=user)
+        return Response(GrupoSerializer(mis_grupos, many=True).data)
+    nombre = request.data.get('nombre', '')
+    descripcion = request.data.get('descripcion', '')
+    if not nombre:
+        return Response({'error': 'El nombre es requerido'}, status=400)
+    grupo = Grupo.objects.create(creador=user, nombre=nombre, descripcion=descripcion)
+    grupo.miembros.add(user)
+    return Response(GrupoSerializer(grupo).data, status=201)
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def detalle_grupo(request, grupo_id):
+    user = get_user_from_request(request)
+    if not user:
+        return Response({'error': 'No autorizado'}, status=401)
+    try:
+        grupo = Grupo.objects.get(id=grupo_id, miembros=user)
+    except Grupo.DoesNotExist:
+        return Response({'error': 'Grupo no encontrado'}, status=404)
+    return Response(GrupoSerializer(grupo).data)
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def invitar_amigo_grupo(request, grupo_id):
+    user = get_user_from_request(request)
+    if not user:
+        return Response({'error': 'No autorizado'}, status=401)
+    try:
+        grupo = Grupo.objects.get(id=grupo_id, miembros=user)
+    except Grupo.DoesNotExist:
+        return Response({'error': 'Grupo no encontrado'}, status=404)
+    amigo_id = request.data.get('usuario_id')
+    try:
+        amigo = User.objects.get(id=amigo_id)
+    except User.DoesNotExist:
+        return Response({'error': 'Usuario no encontrado'}, status=404)
+    grupo.miembros.add(amigo)
+    return Response(GrupoSerializer(grupo).data)
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def estadisticas_grupo(request, grupo_id):
+    user = get_user_from_request(request)
+    if not user:
+        return Response({'error': 'No autorizado'}, status=401)
+    try:
+        grupo = Grupo.objects.get(id=grupo_id, miembros=user)
+    except Grupo.DoesNotExist:
+        return Response({'error': 'Grupo no encontrado'}, status=404)
+    estadisticas = []
+    for miembro in grupo.miembros.all():
+        stats = grupo.estadisticas_miembro(miembro)
+        stats['usuario'] = UserPublicoSerializer(miembro).data
+        estadisticas.append(stats)
+    estadisticas.sort(key=lambda x: x['tareas_completadas'], reverse=True)
+    total_tareas = sum(e['total_tareas'] for e in estadisticas)
+    total_completadas = sum(e['tareas_completadas'] for e in estadisticas)
+    progreso_general = round((total_completadas / total_tareas * 100) if total_tareas > 0 else 0, 1)
+    return Response({
+        'grupo': GrupoSerializer(grupo).data,
+        'progreso_general': progreso_general,
+        'total_tareas': total_tareas,
+        'total_completadas': total_completadas,
+        'ranking': estadisticas,
+    })
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def iniciar_tarea(request, pk):
+    user = get_user_from_request(request)
+    try:
+        tarea = Tarea.objects.get(pk=pk)
+        tarea.estado = 'en_progreso'
+        tarea.last_start_time = timezone.now()
+        tarea.save()
+        return Response(TareaSerializer(tarea).data)
+    except Tarea.DoesNotExist:
+        return Response({'error': 'Tarea no encontrada'}, status=404)
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def pausar_tarea(request, pk):
+    try:
+        tarea = Tarea.objects.get(pk=pk)
+        if tarea.last_start_time and tarea.estado == 'en_progreso':
+            transcurrido = int((timezone.now() - tarea.last_start_time).total_seconds()) // 60
+            tarea.actual_time = (tarea.actual_time or 0) + transcurrido
+        tarea.estado = 'pausada'
+        tarea.last_start_time = None
+        tarea.save()
+        return Response(TareaSerializer(tarea).data)
+    except Tarea.DoesNotExist:
+        return Response({'error': 'Tarea no encontrada'}, status=404)
+
+
 class TareaViewSet(viewsets.ModelViewSet):
     serializer_class = TareaSerializer
 
