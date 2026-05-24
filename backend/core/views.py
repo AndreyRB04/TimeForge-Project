@@ -290,6 +290,7 @@ def mi_perfil_recompensas(request):
         'racha_actual': perfil.racha_actual,
         'racha_maxima': perfil.racha_maxima,
         'titulo_seleccionado': perfil.titulo_seleccionado,
+        'ultimo_dia_activo': str(perfil.ultimo_dia_activo),
         'medallas': [
             {
                 'codigo': m.codigo,
