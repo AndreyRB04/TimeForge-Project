@@ -1,4 +1,5 @@
 from django.db.models import Count, Sum, Avg
+from .firebase_service import enviar_notificacion
 from datetime import datetime, timedelta
 from .models import PerfilRecompensas, MedallaUsuario, TituloUsuario, NIVELES
 from rest_framework import viewsets, status
@@ -699,3 +700,77 @@ def estadisticas_avanzadas(request):
         'horas_pico': top_horas,
         'distribucion_estados': distribucion,
     })
+
+    @api_view(['POST'])
+@permission_classes([AllowAny])
+def guardar_fcm_token(request):
+    user = get_user_from_request(request)
+    if not user:
+        return Response({'error': 'No autorizado'}, status=401)
+    token = request.data.get('fcm_token', '')
+    if token:
+        from .models import FCMToken
+        FCMToken.objects.update_or_create(user=user, defaults={'token': token})
+    return Response({'ok': True})
+
+
+# ── FUNCIONES HELPER PARA ENVIAR NOTIFICACIONES ───────────────────────────────
+# Llama estas funciones desde donde necesites en views.py
+
+def notif_solicitud_amistad(receptor, solicitante):
+    try:
+        token = receptor.fcm_token.token
+        enviar_notificacion(
+            token,
+            '👋 Nueva solicitud de amistad',
+            f'{solicitante.first_name or solicitante.username} quiere ser tu amigo',
+            {'tipo': 'solicitud_amistad'}
+        )
+    except: pass
+
+def notif_solicitud_aceptada(solicitante, receptor):
+    try:
+        token = solicitante.fcm_token.token
+        enviar_notificacion(
+            token,
+            '✅ Solicitud aceptada',
+            f'{receptor.first_name or receptor.username} aceptó tu solicitud',
+            {'tipo': 'solicitud_aceptada'}
+        )
+    except: pass
+
+def notif_nuevo_miembro_grupo(grupo, nuevo_miembro):
+    try:
+        for miembro in grupo.miembros.exclude(id=nuevo_miembro.id):
+            try:
+                token = miembro.fcm_token.token
+                enviar_notificacion(
+                    token,
+                    '👥 Nuevo miembro en tu grupo',
+                    f'{nuevo_miembro.first_name or nuevo_miembro.username} se unió a {grupo.nombre}',
+                    {'tipo': 'nuevo_miembro', 'grupo_id': str(grupo.id)}
+                )
+            except: pass
+    except: pass
+
+def notif_subida_nivel(user, nivel_nombre):
+    try:
+        token = user.fcm_token.token
+        enviar_notificacion(
+            token,
+            '🎉 ¡Subiste de nivel!',
+            f'Ahora eres {nivel_nombre} — ¡sigue así!',
+            {'tipo': 'subida_nivel'}
+        )
+    except: pass
+
+def notif_nueva_medalla(user, nombre_medalla, emoji):
+    try:
+        token = user.fcm_token.token
+        enviar_notificacion(
+            token,
+            f'{emoji} ¡Nueva medalla!',
+            f'Obtuviste: {nombre_medalla}',
+            {'tipo': 'nueva_medalla'}
+        )
+    except: pass
