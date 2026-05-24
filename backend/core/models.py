@@ -365,3 +365,124 @@ class FCMToken(models.Model):
     def __str__(self):
         return f'FCM de {self.user.username}'
 
+class Competencia(models.Model):
+    ESTADO_CHOICES = [
+        ('activa', 'Activa'),
+        ('finalizada', 'Finalizada'),
+    ]
+
+    grupo = models.ForeignKey(Grupo, on_delete=models.CASCADE, related_name='competencias')
+    nombre = models.CharField(max_length=100)
+    descripcion = models.TextField(blank=True)
+    fecha_inicio = models.DateTimeField()
+    fecha_fin = models.DateTimeField()
+    estado = models.CharField(max_length=20, choices=ESTADO_CHOICES, default='activa')
+    creador = models.ForeignKey(User, on_delete=models.CASCADE, related_name='competencias_creadas')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f'{self.nombre} — {self.grupo.nombre}'
+
+    def esta_activa(self):
+        from django.utils import timezone
+        return self.estado == 'activa' and self.fecha_fin > timezone.now()
+
+    def dias_restantes(self):
+        from django.utils import timezone
+        delta = self.fecha_fin - timezone.now()
+        return max(0, delta.days)
+
+    def get_ranking(self):
+        participantes = self.participantes.select_related('user').all()
+        ranking = []
+        for p in participantes:
+            # Calcular stats del período de competencia
+            tareas = Tarea.objects.filter(
+                user=p.user,
+                grupo=self.grupo,
+                updated_at__gte=self.fecha_inicio,
+                updated_at__lte=self.fecha_fin,
+            )
+            completadas = tareas.filter(is_completed=True)
+            tiempo = sum(t.actual_time or 0 for t in completadas)
+
+            try:
+                puntos = p.user.perfil_recompensas.puntos
+                racha = p.user.perfil_recompensas.racha_actual
+            except:
+                puntos = 0
+                racha = 0
+
+            score = (
+                completadas.count() * 10 +
+                tiempo // 10 +
+                racha * 5
+            )
+
+            ranking.append({
+                'usuario': p.user,
+                'tareas_completadas': completadas.count(),
+                'tiempo_trabajado': tiempo,
+                'puntos_recompensas': puntos,
+                'racha': racha,
+                'score_total': score,
+            })
+
+        ranking.sort(key=lambda x: x['score_total'], reverse=True)
+        return ranking
+
+
+class ParticipanteCompetencia(models.Model):
+    competencia = models.ForeignKey(Competencia, on_delete=models.CASCADE, related_name='participantes')
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='competencias')
+    joined_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ['competencia', 'user']
+
+    def __str__(self):
+        return f'{self.user.username} en {self.competencia.nombre}'
+
+
+class RetoCompetencia(models.Model):
+    TIPO_CHOICES = [
+        ('tareas', 'Completar tareas'),
+        ('tiempo', 'Trabajar horas'),
+        ('racha', 'Mantener racha'),
+        ('puntos', 'Ganar puntos'),
+    ]
+
+    competencia = models.ForeignKey(Competencia, on_delete=models.CASCADE, related_name='retos')
+    titulo = models.CharField(max_length=100)
+    descripcion = models.TextField()
+    tipo = models.CharField(max_length=20, choices=TIPO_CHOICES)
+    meta = models.IntegerField()
+    puntos_bonus = models.IntegerField(default=50)
+    emoji = models.CharField(max_length=10, default='🎯')
+
+    def __str__(self):
+        return f'{self.emoji} {self.titulo}'
+
+    def progreso_usuario(self, user, competencia):
+        tareas = Tarea.objects.filter(
+            user=user,
+            grupo=competencia.grupo,
+            updated_at__gte=competencia.fecha_inicio,
+        )
+        if self.tipo == 'tareas':
+            return tareas.filter(is_completed=True).count()
+        elif self.tipo == 'tiempo':
+            return sum(t.actual_time or 0 for t in tareas.filter(is_completed=True)) // 60
+        elif self.tipo == 'racha':
+            try:
+                return user.perfil_recompensas.racha_actual
+            except:
+                return 0
+        elif self.tipo == 'puntos':
+            try:
+                return user.perfil_recompensas.puntos
+            except:
+                return 0
+        return 0
+
+
