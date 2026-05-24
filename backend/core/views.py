@@ -566,3 +566,27 @@ def notif_nueva_medalla(user, nombre_medalla, emoji):
             {'tipo': 'nueva_medalla'}
         )
     except: pass
+class TareaViewSet(viewsets.ModelViewSet):
+    serializer_class = TareaSerializer
+
+    def get_permissions(self):
+        return [AllowAny()]
+
+    def get_queryset(self):
+        user = get_user_from_request(self.request)
+        grupo_id = self.request.query_params.get('grupo')
+        if user and grupo_id:
+            return Tarea.objects.filter(user=user, grupo_id=grupo_id).order_by('-created_at')
+        if user:
+            return Tarea.objects.filter(user=user).order_by('-created_at')
+        return Tarea.objects.all().order_by('-created_at')
+
+    def perform_create(self, serializer):
+        user = get_user_from_request(self.request)
+        grupo_id = self.request.data.get('grupo')
+        if user and grupo_id:
+            serializer.save(user=user, grupo_id=grupo_id)
+        elif user:
+            serializer.save(user=user)
+        else:
+            serializer.save()
