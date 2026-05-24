@@ -274,20 +274,29 @@ class PerfilRecompensas(models.Model):
         return self.verificar_medallas()
 
     def actualizar_racha(self):
-        from django.utils import timezone
-        hoy = timezone.now().date()
-        if self.ultimo_dia_activo:
-            diferencia = (hoy - self.ultimo_dia_activo).days
-            if diferencia == 1:
-                self.racha_actual += 1
-            elif diferencia > 1:
-                self.racha_actual = 1
+    from django.utils import timezone
+    import pytz
+    # Usar zona horaria de Colombia para calcular el día correcto
+    colombia = pytz.timezone('America/Bogota')
+    hoy = timezone.now().astimezone(colombia).date()
+    
+    if self.ultimo_dia_activo:
+        diferencia = (hoy - self.ultimo_dia_activo).days
+        if diferencia == 0:
+            # Ya se actualizó hoy, no hacer nada
+            return
+        elif diferencia == 1:
+            self.racha_actual += 1
         else:
+            # Más de 1 día de diferencia, racha se rompe
             self.racha_actual = 1
-        if self.racha_actual > self.racha_maxima:
-            self.racha_maxima = self.racha_actual
-        self.ultimo_dia_activo = hoy
-        self.save()
+    else:
+        self.racha_actual = 1
+    
+    if self.racha_actual > self.racha_maxima:
+        self.racha_maxima = self.racha_actual
+    self.ultimo_dia_activo = hoy
+    self.save()
 
     def verificar_medallas(self):
         """Verifica y otorga medallas nuevas. Retorna lista de medallas nuevas."""
