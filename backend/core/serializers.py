@@ -23,11 +23,17 @@ class UserSerializer(serializers.ModelSerializer):
 
 
 class UserPublicoSerializer(serializers.ModelSerializer):
-    """Serializer público — no expone datos sensibles"""
+    foto_url = serializers.SerializerMethodField()
+    
     class Meta:
         model = User
-        fields = ['id', 'username', 'first_name', 'email']
-
+        fields = ['id', 'username', 'first_name', 'email', 'foto_url']
+    
+    def get_foto_url(self, obj):
+        try:
+            return obj.perfil_usuario.foto_url
+        except:
+            return ''
 
 class TareaSerializer(serializers.ModelSerializer):
     tiempo_total_actual = serializers.SerializerMethodField()
