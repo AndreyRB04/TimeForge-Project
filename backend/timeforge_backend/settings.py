@@ -20,6 +20,7 @@ INSTALLED_APPS = [
     'rest_framework',
     'core',
     'corsheaders',
+    'anymail',
 ]
 
 MIDDLEWARE = [
