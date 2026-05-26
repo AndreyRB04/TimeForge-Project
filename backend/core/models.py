@@ -2,7 +2,8 @@ from django.db import models
 from django.contrib.auth.models import User
 from django.utils import timezone
 import secrets
-
+import random
+import string
 
 class Tarea(models.Model):
     ESTADO_CHOICES = [
@@ -490,5 +491,39 @@ class RetoCompetencia(models.Model):
             except:
                 return 0
         return 0
+
+class PerfilUsuario(models.Model):
+    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='perfil_usuario')
+    foto_url = models.TextField(blank=True)  # Base64 o URL
+    biografia = models.TextField(blank=True)
+    carrera = models.CharField(max_length=100, blank=True)
+    meta_diaria = models.IntegerField(default=5)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f'Perfil de {self.user.username}'
+
+
+class CodigoRecuperacion(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='codigos_recuperacion')
+    codigo = models.CharField(max_length=6)
+    email = models.EmailField()
+    usado = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def esta_vigente(self):
+        from django.utils import timezone
+        # Válido por 15 minutos
+        return not self.usado and (timezone.now() - self.created_at).seconds < 900
+
+    def __str__(self):
+        return f'Código {self.codigo} para {self.email}'
+
+    @staticmethod
+    def generar_codigo():
+        return ''.join(random.choices(string.digits, k=6))
+
+
+
 
 
