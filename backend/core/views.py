@@ -1,4 +1,7 @@
 from django.db.models import Count, Sum, Avg
+from django.core.mail import send_mail
+from django.conf import settings
+from .models import PerfilUsuario, CodigoRecuperacion
 from .models import Competencia, ParticipanteCompetencia, RetoCompetencia
 from datetime import timedelta
 from .firebase_service import enviar_notificacion
@@ -980,3 +983,229 @@ def retos_competencia(request, competencia_id):
         })
 
     return Response(resultado)
+
+# ── PERFIL PERSONALIZABLE ─────────────────────────────────────────────────────
+
+@api_view(['GET', 'PUT'])
+@permission_classes([AllowAny])
+def perfil_personalizado(request):
+    user = get_user_from_request(request)
+    if not user:
+        return Response({'error': 'No autorizado'}, status=401)
+
+    perfil, _ = PerfilUsuario.objects.get_or_create(user=user)
+
+    if request.method == 'GET':
+        return Response({
+            'id': user.id,
+            'username': user.username,
+            'email': user.email,
+            'first_name': user.first_name,
+            'last_name': user.last_name,
+            'foto_url': perfil.foto_url,
+            'biografia': perfil.biografia,
+            'carrera': perfil.carrera,
+            'meta_diaria': perfil.meta_diaria,
+        })
+
+    # PUT — actualizar perfil
+    user.first_name = request.data.get('first_name', user.first_name)
+    user.last_name = request.data.get('last_name', user.last_name)
+    user.save()
+
+    perfil.biografia = request.data.get('biografia', perfil.biografia)
+    perfil.carrera = request.data.get('carrera', perfil.carrera)
+    perfil.meta_diaria = request.data.get('meta_diaria', perfil.meta_diaria)
+
+    # Foto de perfil (base64)
+    foto = request.data.get('foto_url', '')
+    if foto:
+        perfil.foto_url = foto
+
+    perfil.save()
+
+    return Response({
+        'id': user.id,
+        'username': user.username,
+        'email': user.email,
+        'first_name': user.first_name,
+        'last_name': user.last_name,
+        'foto_url': perfil.foto_url,
+        'biografia': perfil.biografia,
+        'carrera': perfil.carrera,
+        'meta_diaria': perfil.meta_diaria,
+    })
+
+
+# ── RECUPERAR CONTRASEÑA ──────────────────────────────────────────────────────
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def solicitar_codigo_recuperacion(request):
+    """Paso 1: Enviar código de 6 dígitos al email"""
+    email = request.data.get('email', '').strip()
+
+    try:
+        user = User.objects.get(email=email)
+    except User.DoesNotExist:
+        # Por seguridad, no revelar si el email existe
+        return Response({'mensaje': 'Si el correo existe, recibirás un código'})
+
+    # Generar código
+    codigo = CodigoRecuperacion.generar_codigo()
+    CodigoRecuperacion.objects.create(
+        user=user,
+        email=email,
+        codigo=codigo,
+    )
+
+    # Enviar email
+    try:
+        send_mail(
+            subject='🔐 Código de recuperación — TimeForge',
+            message=f'''
+Hola {user.first_name or user.username},
+
+Tu código de recuperación de contraseña es:
+
+        {codigo}
+
+Este código es válido por 15 minutos.
+
+Si no solicitaste este código, ignora este mensaje.
+
+— El equipo de TimeForge
+            ''',
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            recipient_list=[email],
+            fail_silently=False,
+        )
+    except Exception as e:
+        print(f'Error enviando email: {e}')
+        return Response({'error': 'Error al enviar el correo'}, status=500)
+
+    return Response({'mensaje': 'Código enviado a tu correo'})
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def verificar_codigo_recuperacion(request):
+    """Paso 2: Verificar código"""
+    email = request.data.get('email', '').strip()
+    codigo = request.data.get('codigo', '').strip()
+
+    try:
+        registro = CodigoRecuperacion.objects.filter(
+            email=email,
+            codigo=codigo,
+            usado=False,
+        ).latest('created_at')
+    except CodigoRecuperacion.DoesNotExist:
+        return Response({'error': 'Código inválido o expirado'}, status=400)
+
+    if not registro.esta_vigente():
+        return Response({'error': 'El código ha expirado'}, status=400)
+
+    return Response({'valido': True, 'email': email})
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def cambiar_contrasena(request):
+    """Paso 3: Cambiar contraseña con código verificado"""
+    email = request.data.get('email', '').strip()
+    codigo = request.data.get('codigo', '').strip()
+    nueva_password = request.data.get('nueva_password', '').strip()
+
+    if len(nueva_password) < 6:
+        return Response({'error': 'La contraseña debe tener al menos 6 caracteres'}, status=400)
+
+    try:
+        registro = CodigoRecuperacion.objects.filter(
+            email=email,
+            codigo=codigo,
+            usado=False,
+        ).latest('created_at')
+    except CodigoRecuperacion.DoesNotExist:
+        return Response({'error': 'Código inválido'}, status=400)
+
+    if not registro.esta_vigente():
+        return Response({'error': 'El código ha expirado'}, status=400)
+
+    # Cambiar contraseña
+    user = registro.user
+    user.set_password(nueva_password)
+    user.save()
+
+    # Marcar código como usado
+    registro.usado = True
+    registro.save()
+
+    return Response({'mensaje': '¡Contraseña actualizada exitosamente!'})
+
+
+# ── LOGIN CON GOOGLE ──────────────────────────────────────────────────────────
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def login_google(request):
+    """Recibe el token de Google y autentica al usuario"""
+    import requests as req
+
+    google_token = request.data.get('google_token', '')
+    if not google_token:
+        return Response({'error': 'Token de Google requerido'}, status=400)
+
+    # Verificar token con Google
+    try:
+        google_response = req.get(
+            f'https://oauth2.googleapis.com/tokeninfo?id_token={google_token}'
+        )
+        google_data = google_response.json()
+
+        if 'error' in google_data:
+            return Response({'error': 'Token de Google inválido'}, status=400)
+
+        email = google_data.get('email', '')
+        nombre = google_data.get('given_name', '')
+        apellido = google_data.get('family_name', '')
+        foto = google_data.get('picture', '')
+
+        if not email:
+            return Response({'error': 'No se pudo obtener el email de Google'}, status=400)
+
+        # Crear o recuperar usuario
+        user, creado = User.objects.get_or_create(
+            email=email,
+            defaults={
+                'username': email,
+                'first_name': nombre,
+                'last_name': apellido,
+            }
+        )
+
+        if creado:
+            user.set_unusable_password()
+            user.save()
+            # Crear código de invitación
+            CodigoInvitacion.objects.get_or_create(user=user)
+            # Crear perfil con foto de Google
+            perfil, _ = PerfilUsuario.objects.get_or_create(user=user)
+            perfil.foto_url = foto
+            perfil.save()
+
+        token_key = get_or_create_token(user)
+        return Response({
+            'token': token_key,
+            'user': {
+                'id': user.id,
+                'username': user.username,
+                'email': user.email,
+                'first_name': user.first_name,
+                'last_name': user.last_name,
+            },
+            'nuevo_usuario': creado,
+        })
+
+    except Exception as e:
+        return Response({'error': f'Error al verificar con Google: {str(e)}'}, status=500)
