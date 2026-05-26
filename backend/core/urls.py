@@ -48,4 +48,11 @@ urlpatterns = [
     path('competencias/<int:competencia_id>/ranking/', views.ranking_competencia),
     path('competencias/<int:competencia_id>/retos/', views.retos_competencia),
 
+    #google
+    path('auth/google/', views.login_google),
+    path('auth/recuperar/', views.solicitar_codigo_recuperacion),
+    path('auth/verificar-codigo/', views.verificar_codigo_recuperacion),
+    path('auth/cambiar-password/', views.cambiar_contrasena),
+    path('auth/perfil-personalizado/', views.perfil_personalizado),
+
 ]
