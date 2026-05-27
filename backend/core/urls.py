@@ -25,8 +25,11 @@ urlpatterns = [
     path('grupos/', views.grupos),
     path('grupos/unirse/', views.unirse_grupo),
     path('grupos/<int:grupo_id>/', views.detalle_grupo),
+    path('grupos/<int:grupo_id>/editar/', views.editar_grupo),
     path('grupos/<int:grupo_id>/invitar/', views.invitar_amigo_grupo),
+    path('grupos/<int:grupo_id>/amigos-disponibles/', views.amigos_no_en_grupo),
     path('grupos/<int:grupo_id>/estadisticas/', views.estadisticas_grupo),
+    
 
     # Tareas
     path('tareas/<int:pk>/iniciar/', views.iniciar_tarea),
