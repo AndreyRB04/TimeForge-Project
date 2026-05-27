@@ -1,4 +1,4 @@
-from django.db import migrations, models
+from django.db import migrations
 
 
 class Migration(migrations.Migration):
@@ -8,9 +8,5 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        migrations.AddField(
-            model_name='grupo',
-            name='foto_url',
-            field=models.TextField(blank=True),
-        ),
+        # Columna agregada manualmente via SQL en pgAdmin
     ]
