@@ -1209,3 +1209,49 @@ def login_google(request):
 
     except Exception as e:
         return Response({'error': f'Error al verificar con Google: {str(e)}'}, status=500)
+
+@api_view(['PUT'])
+@permission_classes([AllowAny])
+def editar_grupo(request, grupo_id):
+    """Editar nombre, descripción y foto del grupo (solo el creador)"""
+    user = get_user_from_request(request)
+    if not user:
+        return Response({'error': 'No autorizado'}, status=401)
+    try:
+        grupo = Grupo.objects.get(id=grupo_id, creador=user)
+    except Grupo.DoesNotExist:
+        return Response({'error': 'No tienes permiso para editar este grupo'}, status=403)
+
+    grupo.nombre = request.data.get('nombre', grupo.nombre)
+    grupo.descripcion = request.data.get('descripcion', grupo.descripcion)
+    foto = request.data.get('foto_url', '')
+    if foto:
+        grupo.foto_url = foto
+    grupo.save()
+    return Response(GrupoSerializer(grupo).data)
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def amigos_no_en_grupo(request, grupo_id):
+    """Retorna amigos del usuario que aún no están en el grupo"""
+    user = get_user_from_request(request)
+    if not user:
+        return Response({'error': 'No autorizado'}, status=401)
+    try:
+        grupo = Grupo.objects.get(id=grupo_id, miembros=user)
+    except Grupo.DoesNotExist:
+        return Response({'error': 'Grupo no encontrado'}, status=404)
+
+    amistades = Amistad.objects.filter(
+        estado='aceptada'
+    ).filter(solicitante=user) | Amistad.objects.filter(
+        estado='aceptada'
+    ).filter(receptor=user)
+
+    amigos = []
+    for a in amistades:
+        amigo = a.receptor if a.solicitante == user else a.solicitante
+        if not grupo.miembros.filter(id=amigo.id).exists():
+            amigos.append(UserPublicoSerializer(amigo).data)
+    return Response(amigos)
