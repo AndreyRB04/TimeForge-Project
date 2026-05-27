@@ -80,6 +80,7 @@ class CodigoInvitacion(models.Model):
 class Grupo(models.Model):
     nombre = models.CharField(max_length=100)
     descripcion = models.TextField(blank=True)
+    foto_url = models.TextField(blank=True)
     creador = models.ForeignKey(User, on_delete=models.CASCADE, related_name='grupos_creados')
     miembros = models.ManyToManyField(User, related_name='grupos', blank=True)
     codigo_acceso = models.CharField(max_length=20, unique=True, blank=True)
