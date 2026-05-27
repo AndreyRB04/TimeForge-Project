@@ -359,12 +359,19 @@ def ranking_global(request):
     perfiles = PerfilRecompensas.objects.select_related('user').order_by('-puntos')[:20]
     resultado = []
     for i, p in enumerate(perfiles):
+        # DESPUÉS:
+        try:
+            foto_url = p.user.perfil_usuario.foto_url
+        except:
+            foto_url = ''
+        
         resultado.append({
             'posicion': i + 1,
             'usuario': {
                 'id': p.user.id,
                 'nombre': p.user.first_name or p.user.username,
                 'username': p.user.username,
+                'foto_url': foto_url,
             },
             'puntos': p.puntos,
             'nivel': p.nivel,
